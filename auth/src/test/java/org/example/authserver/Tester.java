@@ -1,8 +1,10 @@
 package org.example.authserver;
 
+import org.assertj.core.util.Lists;
 import org.assertj.core.util.Sets;
 import org.example.authserver.config.UserRelationsConfig;
 import org.example.authserver.service.model.RequestCache;
+import org.springframework.data.domain.PageImpl;
 
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -32,6 +34,7 @@ public class Tester {
         config.setUpdateOnAclChange(true);
         config.setScheduledPeriodTime(1);
         config.setScheduledPeriodTimeUnit(TimeUnit.MINUTES);
+        config.setPageSize(1);
         return config;
     }
 
@@ -40,5 +43,9 @@ public class Tester {
         requestCache.getPrincipalHighCardinalityCache().put("user1", Sets.newHashSet());
         requestCache.getPrincipalHighCardinalityCache().put("warm up", Sets.newHashSet());
         return requestCache;
+    }
+
+    public static <T> PageImpl<T> createPage(T... t) {
+        return new PageImpl(Lists.newArrayList(t));
     }
 }

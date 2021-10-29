@@ -6,6 +6,8 @@ import org.example.authserver.Utils;
 import org.example.authserver.repo.AclRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.ScanParams;
@@ -67,17 +69,17 @@ public class AclRedisRepository implements AclRepository {
     }
 
     @Override
-    public Set<String> findAllEndUsers() {
+    public Page<String> findAllEndUsers(Pageable pageable) {
         throw new RuntimeException("findAllByNsObjectIn_REDIS_IS_NOT_IMPLEMENTED_YET");
     }
 
     @Override
-    public Set<String> findAllNamespaces() {
+    public Page<String> findAllNamespaces(Pageable pageable) {
         throw new RuntimeException("findAllByNsObjectIn_REDIS_IS_NOT_IMPLEMENTED_YET");
     }
 
     @Override
-    public Set<String> findAllObjects() {
+    public Page<String> findAllObjects(Pageable pageable) {
         throw new RuntimeException("findAllByNsObjectIn_REDIS_IS_NOT_IMPLEMENTED_YET");
     }
 

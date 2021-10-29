@@ -17,6 +17,7 @@ import org.mockito.internal.stubbing.answers.Returns;
 
 import java.util.HashSet;
 
+import static org.example.authserver.Tester.createPage;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 
@@ -40,7 +41,6 @@ public class UserRelationCacheBuilderTest {
         Mockito.doReturn(Tester.createTestCache()).when(cacheService).prepareHighCardinalityCache(any());
 
         builder = new UserRelationCacheBuilder(Tester.createTrueUserRelationsConfigConfig(), aclRepository, userRelationRepository, zanzibar, cacheService);
-        builder.build("warm up"); // warm up executor
     }
 
     @Test
@@ -51,10 +51,11 @@ public class UserRelationCacheBuilderTest {
         requestCache.getPrincipalHighCardinalityCache().put("user1", Sets.newHashSet("test-application:ID-applicationinstance___8607b629-f1d6-4ab3-99b4-236ceac07371#Owner", "test:groups#TB"));
 
         Mockito.doReturn(1L).when(aclRepository).findMaxAclUpdatedByPrincipal("user1");
+        Mockito.doReturn(createPage("obj1")).when(aclRepository).findAllObjects(any());
         Mockito.doReturn(requestCache).when(cacheService).prepareHighCardinalityCache(any());
         Mockito.doReturn(Sets.newHashSet("test:coarse-access#TB", "test:groups#TB", "test-application:ID-applicationinstance___8607b629-f1d6-4ab3-99b4-236ceac07371#Owner")).when(zanzibar).getRelations(any(), any(), any(), any());
 
-        UserRelationEntity entity = builder.createUserRelations("user1", Sets.newHashSet("ns1", "ns2", "ns3"), Sets.newHashSet("obj1", "obj2", "obj3")).get();
+        UserRelationEntity entity = builder.createEntity("user1", Sets.newHashSet("ns1", "ns2", "ns3")).get();
 
         assertEquals(1, entity.getRelations().size());
         assertEquals("test:coarse-access#TB", entity.getRelations().iterator().next());
@@ -63,9 +64,9 @@ public class UserRelationCacheBuilderTest {
 
     @Test
     public void fullRebuildAsync_whenInvokedManyTimes_shouldSkipSubsequentCalls() throws InterruptedException {
-        Mockito.doReturn(Sets.newHashSet("user1", "user2", "user3")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("ns1", "ns2", "ns3")).when(aclRepository).findAllNamespaces();
-        Mockito.doReturn(Sets.newHashSet("obj1", "obj2", "obj3")).when(aclRepository).findAllObjects();
+        Mockito.doReturn(createPage("user1", "user2", "user3")).when(aclRepository).findAllEndUsers(any());
+        Mockito.doReturn(createPage("ns1", "ns2", "ns3")).when(aclRepository).findAllNamespaces(any());
+        Mockito.doReturn(createPage("obj1", "obj2", "obj3")).when(aclRepository).findAllObjects(any());
         Mockito.doAnswer(new AnswersWithDelay(1, new Returns(new HashSet<>()))).when(zanzibar).getRelations(any(), any(), any(), any());
 
         assertTrue(builder.fullRebuildAsync());
@@ -77,9 +78,9 @@ public class UserRelationCacheBuilderTest {
 
     @Test
     public void build_whenScheduleSameUserForUpdate_shouldBuildItInitiallyAndPutItInQueueForLaterRebuild() throws InterruptedException {
-        Mockito.doReturn(Sets.newHashSet("user1", "user2", "user3")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("ns1", "ns2", "ns3")).when(aclRepository).findAllNamespaces();
-        Mockito.doReturn(Sets.newHashSet("obj1", "obj2", "obj3")).when(aclRepository).findAllObjects();
+        Mockito.doReturn(createPage("user1", "user2", "user3")).when(aclRepository).findAllEndUsers(any());
+        Mockito.doReturn(createPage("ns1", "ns2", "ns3")).when(aclRepository).findAllNamespaces(any());
+        Mockito.doReturn(createPage("obj1", "obj2", "obj3")).when(aclRepository).findAllObjects(any());
         Mockito.doAnswer(new AnswersWithDelay(1, new Returns(new HashSet<>()))).when(zanzibar).getRelations(any(), any(), any(), any());
 
         assertTrue(builder.buildAsync("user1"));
@@ -95,9 +96,9 @@ public class UserRelationCacheBuilderTest {
 
     @Test
     public void firstTimeBuild_whenInvokedFistTime_shouldBuildCache() {
-        Mockito.doReturn(Sets.newHashSet("user1")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("ns1")).when(aclRepository).findAllNamespaces();
-        Mockito.doReturn(Sets.newHashSet("obj1")).when(aclRepository).findAllObjects();
+        Mockito.doReturn(createPage("user1")).when(aclRepository).findAllEndUsers(any());
+        Mockito.doReturn(createPage("ns1")).when(aclRepository).findAllNamespaces(any());
+        Mockito.doReturn(createPage("obj1")).when(aclRepository).findAllObjects(any());
 
         Mockito.doReturn(0L).when(userRelationRepository).count();
 
@@ -106,9 +107,9 @@ public class UserRelationCacheBuilderTest {
 
     @Test
     public void firstTimeBuild_whenInvokedForFilledCache_shouldSkipExecution() {
-        Mockito.doReturn(Sets.newHashSet("user1")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("ns1")).when(aclRepository).findAllNamespaces();
-        Mockito.doReturn(Sets.newHashSet("obj1")).when(aclRepository).findAllObjects();
+        Mockito.doReturn(createPage("user1")).when(aclRepository).findAllEndUsers(any());
+        Mockito.doReturn(createPage("ns1")).when(aclRepository).findAllNamespaces(any());
+        Mockito.doReturn(createPage("obj1")).when(aclRepository).findAllObjects(any());
 
         Mockito.doReturn(1L).when(userRelationRepository).count();
 
@@ -123,33 +124,27 @@ public class UserRelationCacheBuilderTest {
 
     @Test
     public void buildAll_whenNoUsersFound_shouldReturnFalse() {
-        Mockito.doReturn(Sets.newHashSet("ns1")).when(aclRepository).findAllNamespaces();
-        Mockito.doReturn(Sets.newHashSet("obj1")).when(aclRepository).findAllObjects();
+        Mockito.doReturn(createPage("ns1")).when(aclRepository).findAllNamespaces(any());
+        Mockito.doReturn(createPage("obj1")).when(aclRepository).findAllObjects(any());
+        Mockito.doReturn(createPage()).when(aclRepository).findAllEndUsers(any());
 
         assertFalse(builder.buildAll());
     }
 
     @Test
     public void buildAll_whenNoNamespacesFound_shouldReturnFalse() {
-        Mockito.doReturn(Sets.newHashSet("user1")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("obj1")).when(aclRepository).findAllObjects();
-
-        assertFalse(builder.buildAll());
-    }
-
-    @Test
-    public void buildAll_whenNoObjectsFound_shouldReturnFalse() {
-        Mockito.doReturn(Sets.newHashSet("user1")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("ns1")).when(aclRepository).findAllNamespaces();
+        Mockito.doReturn(createPage("user1")).when(aclRepository).findAllEndUsers(any());
+        Mockito.doReturn(createPage("obj1")).when(aclRepository).findAllObjects(any());
+        Mockito.doReturn(createPage()).when(aclRepository).findAllNamespaces(any());
 
         assertFalse(builder.buildAll());
     }
 
     @Test
     public void buildAll_whenAllRequiredDataAreGood_shouldReturnFalse() {
-        Mockito.doReturn(Sets.newHashSet("user1")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("ns1")).when(aclRepository).findAllNamespaces();
-        Mockito.doReturn(Sets.newHashSet("obj1")).when(aclRepository).findAllObjects();
+        Mockito.doReturn(createPage("user1")).when(aclRepository).findAllEndUsers(any());
+        Mockito.doReturn(createPage("ns1")).when(aclRepository).findAllNamespaces(any());
+        Mockito.doReturn(createPage("obj1")).when(aclRepository).findAllObjects(any());
 
         assertTrue(builder.buildAll());
     }
@@ -162,9 +157,9 @@ public class UserRelationCacheBuilderTest {
 
     @Test
     public void canUseCache_whenCacheBuildingIsInProgress_shouldReturnFalse() throws InterruptedException {
-        Mockito.doReturn(Sets.newHashSet("user1")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("ns1")).when(aclRepository).findAllNamespaces();
-        Mockito.doReturn(Sets.newHashSet("obj1")).when(aclRepository).findAllObjects();
+        Mockito.doReturn(createPage("user1")).when(aclRepository).findAllEndUsers(any());
+        Mockito.doReturn(createPage("ns1")).when(aclRepository).findAllNamespaces(any());
+        Mockito.doReturn(createPage("obj1")).when(aclRepository).findAllObjects(any());
         Mockito.doAnswer(new AnswersWithDelay(1, new Returns(new HashSet<>()))).when(zanzibar).getRelations(any(), any(), any(), any());
 
         assertTrue(builder.buildAsync("user1"));

@@ -9,12 +9,18 @@ import org.example.authserver.repo.AclRepository;
 import org.example.authserver.repo.pgsql.UserRelationRepository;
 import org.example.authserver.service.model.RequestCache;
 import org.example.authserver.service.zanzibar.Zanzibar;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 @Slf4j
 public class UserRelationCacheBuilder {
@@ -68,38 +74,47 @@ public class UserRelationCacheBuilder {
             return false;
         }
 
-        Stopwatch started = Stopwatch.createStarted();
-        log.info("Building all user relations...");
-
-        Set<String> endUsers = aclRepository.findAllEndUsers();
-        log.info("Found {} end users for building relations cache.", endUsers.size());
-        if (endUsers.isEmpty()) {
-            return false;
-        }
-
-        Set<String> namespaces = aclRepository.findAllNamespaces();
-        log.info("Found {} namespaces for building relations cache.", namespaces.size());
+        Set<String> namespaces = loadAllNamespaces();
         if (namespaces.isEmpty()) {
             log.warn("Unable to find namespaces. Skip building all cache.");
             return false;
         }
 
-        Set<String> objects = aclRepository.findAllObjects();
-        log.info("Found {} objects for building relations cache.", objects.size());
-        if (objects.isEmpty()) {
-            log.warn("Unable to find objects. Skip building all cache.");
+        Page<String> userPage = processUserPage(0, namespaces);
+        if (userPage.getTotalElements() == 0) {
+            log.warn("Unable to find users.");
             return false;
         }
 
+        for (int i = 1; i < userPage.getTotalPages(); i++) {
+            processUserPage(i, namespaces);
+        }
+        return true;
+    }
+
+    private Page<String> processUserPage(int page, Set<String> namespaces) {
+        Stopwatch started = Stopwatch.createStarted();
+        log.info("Processing user page {}, namespaces {} ...", page, namespaces.size());
+
+        Page<String> userPage = aclRepository.findAllEndUsers(PageRequest.of(page, config.getPageSize()));
+        log.info("Found end users, page: {}, pageSize: {}, totalPages: {}", userPage.getNumber(), config.getPageSize(), userPage.getTotalPages());
+        if (userPage.isEmpty()) {
+            return userPage;
+        }
+
+        Set<String> endUsers = userPage.toSet();
         inProgressUsers.addAll(endUsers);
 
-        for (String endUser : endUsers) {
-            buildUserRelations(endUser, namespaces, objects);
+        try {
+            for (String endUser : endUsers) {
+                buildUserRelations(endUser, namespaces);
+            }
+        } finally {
+            inProgressUsers.clear();
         }
-        inProgressUsers.clear();
 
-        log.info("All user relations are built successfully. {}ms", started.elapsed(TimeUnit.MILLISECONDS));
-        return true;
+        log.info("User relations are built successfully for page {}, time: {}ms", userPage.getNumber(), started.elapsed(TimeUnit.MILLISECONDS));
+        return userPage;
     }
 
     public boolean build(String user) {
@@ -124,23 +139,17 @@ public class UserRelationCacheBuilder {
     }
 
     private void buildUserRelations(String user) {
-        Set<String> namespaces = aclRepository.findAllNamespaces();
+        Set<String> namespaces = loadAllNamespaces();
         if (namespaces.isEmpty()) {
             log.warn("Unable to find namespaces. Skip building cache for user: {}", user);
             return;
         }
 
-        Set<String> objects = aclRepository.findAllObjects();
-        if (objects.isEmpty()) {
-            log.warn("Unable to find objects. Skip building cache for user: {}", user);
-            return;
-        }
-
-        buildUserRelations(user, namespaces, objects);
+        buildUserRelations(user, namespaces);
     }
 
-    public void buildUserRelations(String user, Set<String> namespaces, Set<String> objects) {
-        Optional<UserRelationEntity> entityOptional = createUserRelations(user, namespaces, objects);
+    public void buildUserRelations(String user, Set<String> namespaces) {
+        Optional<UserRelationEntity> entityOptional = createEntity(user, namespaces);
         if (entityOptional.isEmpty()) {
             log.trace("No user relations found, user: {}", user);
             return;
@@ -149,7 +158,7 @@ public class UserRelationCacheBuilder {
         userRelationRepository.save(entityOptional.get());
     }
 
-    public Optional<UserRelationEntity> createUserRelations(String user, Set<String> namespaces, Set<String> objects) {
+    public Optional<UserRelationEntity> createEntity(String user, Set<String> namespaces) {
         if (StringUtils.isBlank(user) || "*".equals(user)) {
             log.trace("Skip building cache for user: {}", user);
             return Optional.empty();
@@ -157,29 +166,45 @@ public class UserRelationCacheBuilder {
 
         long maxAclUpdated = aclRepository.findMaxAclUpdatedByPrincipal(user);
         RequestCache requestCache = cacheService.prepareHighCardinalityCache(user);
-
-        Stopwatch stopwatch = Stopwatch.createStarted();
-        log.trace("Building user relations cache for user {} ...", user);
-
-        Set<String> relations = new HashSet<>();
-        for (String namespace : namespaces) {
-            for (String object : objects) {
-                relations.addAll(zanzibar.getRelations(namespace, object, user, requestCache));
-            }
-        }
-
-        int allRelationsSize = relations.size();
-        relations.removeAll(requestCache.getPrincipalHighCardinalityCache().getOrDefault(user, new HashSet<>()));
-
-        log.trace("Found {} relations for user {}", relations.size(), user);
-        log.trace("All rel count: {}, maxUpdated: {})", allRelationsSize, maxAclUpdated);
-        log.debug("Finished building user relations cache for user {}, time: {}", user, stopwatch.elapsed(TimeUnit.MILLISECONDS));
+        Set<String> relations = collectRelations(user, namespaces, requestCache);
 
         return Optional.of(UserRelationEntity.builder()
                 .user(user)
                 .relations(relations)
                 .maxAclUpdated(maxAclUpdated)
                 .build());
+    }
+
+    private Set<String> collectRelations(String user, Set<String> namespaces, RequestCache requestCache) {
+        Stopwatch stopwatch = Stopwatch.createStarted();
+
+        Set<String> relations = new HashSet<>();
+
+        Page<String> objectPage = processObjectPage(0);
+        log.info("Zanzibar user {}, namespaces {}, objects {}...", user, namespaces.size(), objectPage.getTotalPages());
+
+        processZanzibar(user, namespaces, requestCache, relations, objectPage);
+
+        for (int i = 1; i < objectPage.getTotalPages(); i++) {
+            processZanzibar(user, namespaces, requestCache, relations, processObjectPage(i));
+        }
+
+        int allRelationsSize = relations.size();
+        relations.removeAll(requestCache.getPrincipalHighCardinalityCache().getOrDefault(user, new HashSet<>()));
+
+        log.info("Zanzibar returned {} relations for user {} (all rel count: {})", relations.size(), user, allRelationsSize);
+        log.info("Finished zanzibar user relations for user {}, time: {}", user, stopwatch.elapsed(TimeUnit.MILLISECONDS));
+        return relations;
+    }
+
+    private void processZanzibar(String user, Set<String> namespaces, RequestCache requestCache, Set<String> relations, Page<String> objectPage) {
+        for (String object : objectPage.toSet()) {
+            //Stopwatch stopwatch = Stopwatch.createStarted();
+            for (String namespace : namespaces) {
+                relations.addAll(zanzibar.getRelations(namespace, object, user, requestCache));
+            }
+            //log.info("Gather relations for all namespaces {} and per user {}, object {}, {}ms", namespaces.size(), user, object, stopwatch.elapsed(TimeUnit.MILLISECONDS));
+        }
     }
 
     private void scheduledBuild() {
@@ -224,5 +249,31 @@ public class UserRelationCacheBuilder {
 
     public boolean canUseCache(String user) {
         return config.isEnabled() && !hasScheduled(user) && !hasInProgress(user);
+    }
+
+    private Page<String> processNamespacePage(int page) {
+        Page<String> namespacePage = aclRepository.findAllNamespaces(PageRequest.of(page, config.getPageSize()));
+        log.info("Found namespaces, page: {}, pageSize: {}, totalPages: {}", namespacePage.getNumber(), config.getPageSize(), namespacePage.getTotalPages());
+        return namespacePage;
+    }
+
+    private Page<String> processObjectPage(int page) {
+        Page<String> objectPage = aclRepository.findAllObjects(PageRequest.of(page, config.getPageSize()));
+        //log.info("Found objects, page: {}, pageSize: {}, totalPages: {}", objectPage.getNumber(), config.getPageSize(), objectPage.getTotalPages());
+        return objectPage;
+    }
+
+    private Set<String> loadAllNamespaces() {
+        return loadAll(this::processNamespacePage);
+    }
+
+    public static Set<String> loadAll(Function<Integer, Page<String>> pageLoader) {
+        Page<String> page = pageLoader.apply(0);
+        Set<String> namespaces = new HashSet<>(page.toSet());
+
+        for (int i = 1; i < page.getTotalPages(); i++) {
+            namespaces.addAll(pageLoader.apply(i).toSet());
+        }
+        return namespaces;
     }
 }

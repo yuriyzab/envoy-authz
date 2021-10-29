@@ -18,6 +18,7 @@ import org.mockito.MockitoAnnotations;
 import java.util.HashSet;
 import java.util.Optional;
 
+import static org.example.authserver.Tester.createPage;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 
@@ -45,9 +46,9 @@ public class RelationsServiceTest {
         Mockito.doReturn(config).when(appProperties).getUserRelationsCache();
 
         aclRepository = Mockito.mock(AclRepository.class);
-        Mockito.doReturn(Sets.newHashSet("user1")).when(aclRepository).findAllEndUsers();
-        Mockito.doReturn(Sets.newHashSet("ns1")).when(aclRepository).findAllNamespaces();
-        Mockito.doReturn(Sets.newHashSet("obj1")).when(aclRepository).findAllObjects();
+        Mockito.doReturn(createPage("user1")).when(aclRepository).findAllEndUsers(any());
+        Mockito.doReturn(createPage("ns1")).when(aclRepository).findAllNamespaces(any());
+        Mockito.doReturn(createPage("obj1")).when(aclRepository).findAllObjects(any());
         Mockito.doReturn(1L).when(aclRepository).findMaxAclUpdatedByPrincipal("user1");
         Mockito.doReturn(Tester.createTestCache()).when(cacheService).prepareHighCardinalityCache(any());
 

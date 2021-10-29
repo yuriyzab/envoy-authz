@@ -13,4 +13,5 @@ public class UserRelationsConfig {
     private boolean updateOnAclChange;
     private int scheduledPeriodTime;
     private TimeUnit scheduledPeriodTimeUnit;
+    private int pageSize;
 }

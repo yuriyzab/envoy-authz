@@ -6,6 +6,8 @@ import org.example.authserver.entity.AclEntity;
 import org.example.authserver.repo.AclRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Set;
@@ -67,18 +69,18 @@ public class AclPgRepository implements AclRepository {
     }
 
     @Override
-    public Set<String> findAllEndUsers() {
-        return repository.findDistinctEndUsers();
+    public Page<String> findAllEndUsers(Pageable pageable) {
+        return repository.findDistinctEndUsers(pageable);
     }
 
     @Override
-    public Set<String> findAllNamespaces() {
-        return repository.findDistinctNamespaces();
+    public Page<String> findAllNamespaces(Pageable pageable) {
+        return repository.findDistinctNamespaces(pageable);
     }
 
     @Override
-    public Set<String> findAllObjects() {
-        return repository.findDistinctObjects();
+    public Page<String> findAllObjects(Pageable pageable) {
+        return repository.findDistinctObjects(pageable);
     }
 
     @Override
