@@ -5,13 +5,13 @@ import org.example.authserver.config.UserRelationsConfig;
 import org.example.authserver.entity.UserRelationEntity;
 import org.example.authserver.repo.AclRepository;
 import org.example.authserver.repo.pgsql.UserRelationRepository;
+import org.example.authserver.service.zanzibar.AclRelationConfigService;
 import org.example.authserver.service.zanzibar.Zanzibar;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.HashSet;
@@ -32,6 +32,8 @@ public class UserRelationsCacheServiceTest {
     private Zanzibar zanzibar;
     @Mock
     private CacheService cacheService;
+    @Mock
+    private AclRelationConfigService aclRelationConfigService;
 
     private UserRelationsCacheService service;
 
@@ -40,7 +42,7 @@ public class UserRelationsCacheServiceTest {
         UserRelationsConfig config = Tester.createTrueUserRelationsConfigConfig();
 
         aclRepository = Mockito.mock(AclRepository.class);
-        UserRelationCacheBuilder builder = new UserRelationCacheBuilder(config, aclRepository, userRelationRepository, zanzibar, cacheService);
+        UserRelationCacheBuilder builder = new UserRelationCacheBuilder(config, aclRepository, userRelationRepository, zanzibar, cacheService, aclRelationConfigService);
 
         service = new UserRelationsCacheService(builder, userRelationRepository, aclRepository);
     }

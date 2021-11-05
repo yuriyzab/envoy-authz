@@ -10,12 +10,19 @@ import org.example.authserver.entity.UserRelationEntity;
 import org.example.authserver.repo.AclRepository;
 import org.example.authserver.repo.pgsql.UserRelationRepository;
 import org.example.authserver.service.model.RequestCache;
+import org.example.authserver.service.zanzibar.AclRelationConfigService;
 import org.example.authserver.service.zanzibar.Zanzibar;
 import reactor.util.function.Tuple2;
 import reactor.util.function.Tuples;
 
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 public class UserRelationCacheBuilder {
@@ -27,16 +34,18 @@ public class UserRelationCacheBuilder {
     private final AclRepository aclRepository;
     private final UserRelationRepository userRelationRepository;
     private final CacheService cacheService;
+    private final AclRelationConfigService aclRelationConfigService;
 
     private final List<String> inProgressUsers = new CopyOnWriteArrayList<>();
     private final List<String> scheduledUsers = new CopyOnWriteArrayList<>();
 
-    public UserRelationCacheBuilder(UserRelationsConfig config, AclRepository aclRepository, UserRelationRepository userRelationRepository, Zanzibar zanzibar, CacheService cacheService) {
+    public UserRelationCacheBuilder(UserRelationsConfig config, AclRepository aclRepository, UserRelationRepository userRelationRepository, Zanzibar zanzibar, CacheService cacheService, AclRelationConfigService aclRelationConfigService) {
         this.config = config;
         this.aclRepository = aclRepository;
         this.userRelationRepository = userRelationRepository;
         this.zanzibar = zanzibar;
         this.cacheService = cacheService;
+        this.aclRelationConfigService = aclRelationConfigService;
 
         scheduler.scheduleAtFixedRate(this::scheduledBuild, 0, config.getScheduledPeriodTime(), config.getScheduledPeriodTimeUnit());
     }
@@ -96,7 +105,21 @@ public class UserRelationCacheBuilder {
         return true;
     }
 
+    private boolean isUpToDate(String user, long maxAclUpdated) {
+        Optional<UserRelationEntity> entityOptional = userRelationRepository.findById(user);
+        if (entityOptional.isEmpty()) {
+            return false;
+        }
+        return entityOptional.get().getMaxAclUpdated() >= maxAclUpdated;
+    }
+
     private void buildUserRelations(String user) {
+        long maxAclUpdated = aclRepository.findMaxAclUpdatedByPrincipal(user);
+        if (isUpToDate(user, maxAclUpdated)) {
+            log.debug("User's cache is already up-to-date. Skip building cache for user {}.", user);
+            return;
+        }
+
         Set<Acl> highCardinalityAcls = aclRepository.findAllByPrincipal(user);
 
         Set<Tuple2<String, String>> result = new HashSet<>();
@@ -106,28 +129,32 @@ public class UserRelationCacheBuilder {
             result.addAll(lowCardinalityTuples);
         }
 
-        buildUserRelations(user, result);
+        buildUserRelations(user, result, maxAclUpdated);
     }
 
     private Set<Tuple2<String, String>> getLowCardinalityRelations(String usersetNamespace, String usersetObject, String relation, Set<Tuple2<String, String>> cache) {
         if (usersetNamespace == null || usersetObject == null || relation == null) return cache;
 
-        log.trace("Lookup for low cardinality: {}, {}, {}", usersetNamespace, usersetObject, usersetObject);
-        Set<Acl> acls = aclRepository.findAllForCache(usersetNamespace, usersetObject, relation);
-        if (acls.size() == 0) return cache;
+        log.info("Lookup for low cardinality: {}, {}, {}", usersetNamespace, usersetObject, relation);
+        Set<String> relations = aclRelationConfigService.nestedRelations(usersetNamespace, usersetObject, relation);
 
-        for (Acl acl : acls){
-            cache.add(Tuples.of(acl.getNamespace(), acl.getObject()));
-            Set<Tuple2<String, String>> res = getLowCardinalityRelations(acl.getNamespace(), acl.getObject(), acl.getRelation(), cache);
-            cache.addAll(res);
+        for (String rel : relations) {
+            Set<Acl> acls = aclRepository.findAllForCache(usersetNamespace, usersetObject, rel);
+            if (acls.size() == 0) continue;
+
+            for (Acl acl : acls) {
+                cache.add(Tuples.of(acl.getNamespace(), acl.getObject()));
+                Set<Tuple2<String, String>> res = getLowCardinalityRelations(acl.getNamespace(), acl.getObject(), acl.getRelation(), cache);
+                cache.addAll(res);
+            }
         }
 
         return cache;
     }
 
     @Timed(value = "relation.cache.build", percentiles = {0.99, 0.95, 0.75})
-    public void buildUserRelations(String user, Set<Tuple2<String, String>> nsObjects) {
-        Optional<UserRelationEntity> entityOptional = createUserRelations(user, nsObjects);
+    public void buildUserRelations(String user, Set<Tuple2<String, String>> nsObjects, long maxAclUpdated) {
+        Optional<UserRelationEntity> entityOptional = createUserRelations(user, nsObjects, maxAclUpdated);
         if (entityOptional.isEmpty()) {
             log.trace("No user relations found, user: {}", user);
             return;
@@ -136,13 +163,12 @@ public class UserRelationCacheBuilder {
         userRelationRepository.save(entityOptional.get());
     }
 
-    public Optional<UserRelationEntity> createUserRelations(String user, Set<Tuple2<String, String>> nsObjects) {
+    public Optional<UserRelationEntity> createUserRelations(String user, Set<Tuple2<String, String>> nsObjects, long maxAclUpdated) {
         if (StringUtils.isBlank(user) || "*".equals(user)) {
             log.trace("Skip building cache for user: {}", user);
             return Optional.empty();
         }
 
-        long maxAclUpdated = aclRepository.findMaxAclUpdatedByPrincipal(user);
         RequestCache requestCache = cacheService.prepareHighCardinalityCache(user);
 
         Stopwatch stopwatch = Stopwatch.createStarted();
@@ -150,11 +176,10 @@ public class UserRelationCacheBuilder {
 
         Set<String> relations = new HashSet<>();
         for (Tuple2<String, String> nsObject : nsObjects) {
-                relations.addAll(zanzibar.getRelations(nsObject.getT1(), nsObject.getT2(), user, requestCache));
+            relations.addAll(zanzibar.getRelations(nsObject.getT1(), nsObject.getT2(), user, requestCache));
         }
 
         int allRelationsSize = relations.size();
-        //relations.removeAll(requestCache.getPrincipalHighCardinalityCache().getOrDefault(user, new HashSet<>()));
 
         log.trace("Found {} relations for user {}", relations.size(), user);
         log.trace("All rel count: {}, maxUpdated: {})", allRelationsSize, maxAclUpdated);

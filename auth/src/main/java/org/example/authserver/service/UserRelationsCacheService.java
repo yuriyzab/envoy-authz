@@ -6,6 +6,7 @@ import org.example.authserver.config.AppProperties;
 import org.example.authserver.entity.UserRelationEntity;
 import org.example.authserver.repo.AclRepository;
 import org.example.authserver.repo.pgsql.UserRelationRepository;
+import org.example.authserver.service.zanzibar.AclRelationConfigService;
 import org.example.authserver.service.zanzibar.Zanzibar;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -23,8 +24,8 @@ public class UserRelationsCacheService {
     private final AclRepository aclRepository;
 
     @Autowired
-    public UserRelationsCacheService(AppProperties appProperties, AclRepository aclRepository, UserRelationRepository userRelationRepository, Zanzibar zanzibar, CacheService cacheService) {
-        this(new UserRelationCacheBuilder(appProperties.getUserRelationsCache(), aclRepository, userRelationRepository, zanzibar, cacheService), userRelationRepository, aclRepository);
+    public UserRelationsCacheService(AppProperties appProperties, AclRepository aclRepository, UserRelationRepository userRelationRepository, Zanzibar zanzibar, CacheService cacheService, AclRelationConfigService aclRelationConfigService) {
+        this(new UserRelationCacheBuilder(appProperties.getUserRelationsCache(), aclRepository, userRelationRepository, zanzibar, cacheService, aclRelationConfigService), userRelationRepository, aclRepository);
     }
 
     public UserRelationsCacheService(UserRelationCacheBuilder builder, UserRelationRepository userRelationRepository, AclRepository aclRepository) {
